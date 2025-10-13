@@ -12,10 +12,15 @@ with warnings.catch_warnings():
 
 import io
 ##---Setup---##
-
+color = st.get_option("theme.primaryColor")
 os.makedirs('../data', exist_ok=True)
-# Set layout to wide mode
-# st.set_page_config(page_title="Engagement Zone Interactive", layout="wide")
+
+# Set layout to wide mode, and light theme
+st.set_page_config(page_title="Engagement Zone Interactive", layout="wide", initial_sidebar_state="expanded", page_icon="🛩️")
+
+# Set icon
+
+
 
 
 
@@ -72,15 +77,13 @@ fig_interaction = plot_engagement_zone_interaction(ez_parameters, (xi_values, ez
 col_display, col_download = st.columns([3, 1])
 
 with col_display:
-    # Initialize session state for display option if not exists
-    if "selected_info" not in st.session_state:
-        st.session_state.selected_info = "EZ Interaction"
-    
+    # Compute radio default index from session state without pre-setting the key
+    default_selected = st.session_state.get("selected_info", "EZ Interaction")
     selected_info = st.radio(
         "Display Options",
         ["EZ Boundaries", "EZ Interaction", "EZ Summary", "EZ Variables"],
         horizontal=True,
-        index=["EZ Boundaries", "EZ Interaction", "EZ Summary", "EZ Variables"].index(st.session_state.selected_info),
+        index=["EZ Boundaries", "EZ Interaction", "EZ Summary", "EZ Variables"].index(default_selected),
         key="selected_info"
     )
 
