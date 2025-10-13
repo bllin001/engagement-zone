@@ -1,0 +1,16 @@
+# ignore ez python scripts
+ez-mandana.py
+ez.py
+
+# ignore directory
+/data
+/images
+/docs
+
+#ignore R files
+*.R
+*.Rmd
+*.Rhistory
+
+ignore pdf files
+*.pdf
