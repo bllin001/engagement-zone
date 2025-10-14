@@ -4,7 +4,8 @@ import sys
 import matplotlib.pyplot as plt
 import os
 sys.path.append('code/utils')
-from utils.engament_zone import *
+from utils.engament_zone_model import *
+from utils.engament_zone_viz import *
 
 import warnings
 with warnings.catch_warnings():
@@ -19,9 +20,6 @@ os.makedirs('../data', exist_ok=True)
 st.set_page_config(page_title="Engagement Zone Interactive", layout="wide", initial_sidebar_state="expanded", page_icon="🛩️")
 
 # Set icon
-
-
-
 
 
 ##---Sidebar---##
