@@ -7,8 +7,6 @@ from matplotlib.patches import Arc
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-
-
 # Shared color palette for Engagement Zone visuals
 EZ_COLORS = {
     "zone_fill": "#91c9f7",
@@ -29,9 +27,15 @@ EZ_COLORS = {
     "aspect_arc": "#0ea5e9",
     "aspect_text": "#0f172a",
 }
-def wind_model():
-    
-    pass
+
+def wrap_angle_deg(angle: float) -> float:
+    """Wrap an angle in degrees to the [-180, 180] range, including -180 and 180 only once."""
+    wrapped = ((angle + 180.0) % 360.0) - 180.0
+    # If input is exactly 180 or -180, preserve sign
+    if np.isclose(np.abs(angle) % 360, 180.0):
+        return np.sign(angle) * 180.0
+    return wrapped
+
 
 def _calc_centered_limits(
     center_x: float,
@@ -56,7 +60,10 @@ def _calc_centered_limits(
     )
 
 def plot_engagement_zone_boundaries(mu, R, r, intruder_parameters, xi_values, ez_points, save_path=None, figsize=(12, 10)):
-    intruder_x, intruder_y = intruder_parameters
+    intruder_x = intruder_parameters.get('x')
+    intruder_y = intruder_parameters.get('y')
+    intruder_speed = intruder_parameters.get('speed')
+    
     x = intruder_x + ez_points * np.cos(xi_values)
     y = intruder_y + ez_points * np.sin(xi_values)
 

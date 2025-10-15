@@ -2,10 +2,6 @@ import numpy as np
 import os
 import pandas as pd
 
-def wind_model():
-    
-    pass
-
 def wrap_angle_deg(angle: float) -> float:
     """Wrap an angle in degrees to the [-180, 180] range, including -180 and 180 only once."""
     wrapped = ((angle + 180.0) % 360.0) - 180.0
@@ -14,17 +10,17 @@ def wrap_angle_deg(angle: float) -> float:
         return np.sign(angle) * 180.0
     return wrapped
 
-def intruder(x, y):
-    return x, y
+def intruder(x, y, speed=None):
+    return {'x': x, 'y': y, 'speed': speed}
 
 def agent(x, y, heading, speed=None):
     """
-    Create agent parameters.
+    Create agent parameters as a dictionary.
     heading: in degrees (converted to radians internally)
     speed: optional, not used in current calculations
     """
-    agent_heading = np.deg2rad(heading)
-    return x, y, agent_heading
+    heading_rad = np.deg2rad(heading)
+    return {'x': x, 'y': y, 'heading': heading_rad, 'speed': speed}
 
 def rho_values(mu, R, r, save_csv=None, save_txt=None):
     """
@@ -68,6 +64,7 @@ def rho_values(mu, R, r, save_csv=None, save_txt=None):
     return intruder_xi_values, ez_points, df
 
 def agent_safety(intruder_parameters, agent_parameters, mu=0.7, R=1.0, r=0.25):
+    
     """
     Evaluate agent safety relative to engagement zone.
     
@@ -77,8 +74,13 @@ def agent_safety(intruder_parameters, agent_parameters, mu=0.7, R=1.0, r=0.25):
     """
     
 # Step 1: Centralized geometric calculations and summary output
-    agent_x, agent_y, agent_heading = agent_parameters
-    intruder_x, intruder_y = intruder_parameters
+    agent_x = agent_parameters.get('x')
+    agent_y = agent_parameters.get('y')
+    agent_heading = agent_parameters.get('heading')
+    agent_speed = agent_parameters.get('speed')
+    intruder_x = intruder_parameters.get('x')
+    intruder_y = intruder_parameters.get('y')
+    intruder_speed = intruder_parameters.get('speed')
 
     # Compute agent/intruder positions
     intruder_pos = np.array([intruder_x, intruder_y])
