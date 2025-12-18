@@ -22,7 +22,22 @@ def agent(x, y, heading, speed=None):
     heading_rad = np.deg2rad(heading)
     return {'x': x, 'y': y, 'heading': heading_rad, 'speed': speed}
 
-def rho_values(mu, R, r, save_csv=None, save_txt=None):
+def rho(xi, mu, R, r):
+    """
+    Engagement Zone radial boundary for a given aspect angle xi.
+    """
+    xi_arr = np.asarray(xi, dtype=float)
+    mu = float(mu)
+    R = float(R)
+    r = float(r)
+    if mu <= 0 or R <= 0:
+        raise ValueError("mu and R must be positive to evaluate rho.")
+    cos_xi = np.cos(xi_arr)
+    under_sqrt = cos_xi**2 - 1 + ((R + r) ** 2) / (mu**2 * R**2)
+    under_sqrt = np.clip(under_sqrt, 0.0, None)
+    return mu * R * (cos_xi + np.sqrt(under_sqrt))
+
+def rho_values(mu, R, r, save_csv=None, save_txt=None, num_points=500):
     """
     Calculate engagement zone boundary points for all aspect angles.
     
@@ -30,7 +45,7 @@ def rho_values(mu, R, r, save_csv=None, save_txt=None):
     Range: -180° to +180° (ξ ∈ [-π, π] radians)
     """
     # rho values is a list of aspect angles where is between -180 and 180 degrees
-    intruder_xi_values = np.linspace(-np.pi, np.pi, 500)  # radians
+    intruder_xi_values = np.linspace(-np.pi, np.pi, num_points)  # radians
 
     cos_xi = np.cos(intruder_xi_values)
     cos_squared = cos_xi**2
@@ -62,6 +77,29 @@ def rho_values(mu, R, r, save_csv=None, save_txt=None):
             f.write(df.to_string(index=False))
 
     return intruder_xi_values, ez_points, df
+
+def compute_ez_boundary(mu, R, r, num_points=500):
+    """
+    Generate the engagement zone boundary in polar coordinates.
+
+    Parameters
+    ----------
+    mu : float
+        Speed ratio between the agent and pursuer.
+    R : float
+        Outer engagement zone radius.
+    r : float
+        Inner engagement zone radius.
+    num_points : int, optional
+        Number of samples used to trace the boundary.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        Aspect angles (ξ) in radians and corresponding ρ values.
+    """
+    xi_values, rho, _ = rho_values(mu, R, r, num_points=num_points)
+    return xi_values, rho
 
 def agent_safety(intruder_parameters, agent_parameters, mu=0.7, R=1.0, r=0.25):
     

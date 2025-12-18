@@ -9,43 +9,20 @@ def wrap_angle_deg(angle: float) -> float:
         return np.sign(angle) * 180.0
     return wrapped
 
-def wind_effect(wind_speed, v_ground, entity_parameters, tol=1e-8):
-    """
-    Compute the effective ground speed given a fixed eastward wind.
-    v_ground: ground speed (without wind effect)
-    wind_speed: magnitude of the wind speed (eastward)
-    entity_parameters: dictionary with 'heading' (radians)
-    tol: tolerance for angle comparison
-    Returns (v_ground_effect, wind_type, relative_angle)
-    """
-    
-    heading = entity_parameters.get('heading', 0.0)
-    
-    # Wind Direction: Fixed eastward (deterministic)
-    wind_direction = 0.0  # radians, eastward
-    
-    relative_angle = heading - wind_direction
-    
-    # Convert radians → degrees → wrap → back to radians
-    relative_angle = np.deg2rad(wrap_angle_deg(np.rad2deg(relative_angle)))
-    
-    # Check alignment
-    if abs(np.sin(relative_angle)) < tol:
-        # Colinear (east or west)
-        if np.cos(relative_angle) > 0:
-            v_ground_effect = v_ground + wind_speed
-            wind_type = "tailwind"
-        else:
-            v_ground_effect = max(0.0, v_ground - wind_speed)
-            wind_type = "headwind"
-    else:
-        # Oblique (crosswind)
-        v_ground_effect = np.sqrt(v_ground**2 + wind_speed**2 + 2*v_ground*wind_speed*np.cos(relative_angle))
-        wind_type = "oblique"
+def wind_effect(wind_direction=0.0):
+    """Classify wind relative to +x (east) for labeling purposes (radians).
 
-    return v_ground_effect, wind_type, relative_angle
+    0 → east (tailwind for eastbound pursuer), π → west (headwind), others crosswind.
+    """
+    two_pi = 2 * np.pi
+    wd = float(wind_direction) % two_pi
+    if np.isclose(wd, 0.0) or np.isclose(wd, two_pi):
+        return 'tailwind'
+    if np.isclose(wd, np.pi):
+        return 'headwind'
+    return 'crosswind'
 
-def ground_speed(entity_parameters, wind_speed):
+def ground_speed(entity_parameters, wind_speed, wind_direction=0.0):
     """
     Compute the ground speed magnitude given an entity's airspeed and a scalar eastward wind.
 
@@ -63,17 +40,46 @@ def ground_speed(entity_parameters, wind_speed):
     """
     heading = float(entity_parameters.get('heading', 0.0))
     speed = float(entity_parameters.get('speed', 0.0))
+    
+    wind_type = wind_effect(wind_direction)
 
-    # Wind Direction: Fixed eastward (deterministic)
-    wind_speed_x, wind_speed_y = wind_speed, 0.0
+    # # Wind Direction: Fixed eastward (deterministic)
+    # wind_speed_x, wind_speed_y = wind_speed, 0.0
 
     # Ground velocity components (east-west, north-south)
-    v_ground_x = speed * np.cos(heading) + wind_speed_x
-    v_ground_y = speed * np.sin(heading) + wind_speed_y
+    v_ground_x = speed * np.cos(heading) + wind_speed * np.cos(wind_direction)
+    v_ground_y = speed * np.sin(heading) + wind_speed * np.sin(wind_direction)
 
-    return np.hypot(v_ground_x, v_ground_y)
+    return np.hypot(v_ground_x, v_ground_y), wind_type
 
-def ground_speed_uncertainty(entity_parameters,  wind_speed_1 = 10, wind_speed_2 = 20 , prob_w1 = 0.6):
+def compute_ground_speed(air_speed, wind_speed, heading_deg, wind_direction_deg):
+    """
+    Convenience wrapper that accepts heading and wind direction in degrees.
+
+    Parameters
+    ----------
+    air_speed : float
+        Air-referenced speed of the platform (m/s).
+    wind_speed : float
+        Magnitude of the wind (m/s).
+    heading_deg : float
+        Heading of the platform in degrees (0° = East, positive counter-clockwise).
+    wind_direction_deg : float
+        Direction the wind is blowing toward in degrees.
+
+    Returns
+    -------
+    float
+        Ground speed magnitude after accounting for wind.
+    """
+    entity_parameters = {
+        'speed': float(air_speed),
+        'heading': np.deg2rad(heading_deg),
+    }
+    ground_speed_value, _ = ground_speed(entity_parameters, wind_speed, np.deg2rad(wind_direction_deg))
+    return ground_speed_value
+
+def ground_speed_uncertainty(entity_parameters,  wind_speed_1 = 10, wind_speed_2 = 20 , prob_w1 = 0.6, wind_direction=0.0):
     """
     Compute the expected ground speed under two wind-speed scenarios
     with fixed probabilities (0.6 and 0.4).
@@ -99,8 +105,8 @@ def ground_speed_uncertainty(entity_parameters,  wind_speed_1 = 10, wind_speed_2
 
     prob_w2 = 1 - prob_w1
 
-    v_ground_1 = ground_speed(entity_parameters, wind_speed_1)
-    v_ground_2 = ground_speed(entity_parameters, wind_speed_2)
+    v_ground_1, wind_type_1 = ground_speed(entity_parameters, wind_speed_1, wind_direction)
+    v_ground_2, wind_type_2 = ground_speed(entity_parameters, wind_speed_2, wind_direction)
 
     # Expected (probability-weighted) ground speed
     v_ground_expected = prob_w1 * v_ground_1 + prob_w2 * v_ground_2
@@ -108,7 +114,7 @@ def ground_speed_uncertainty(entity_parameters,  wind_speed_1 = 10, wind_speed_2
 
 def wind_model(agent_parameters, intruder_parameters, t_fuel,
                method, wind_speed_1=10.0, wind_speed_2=20.0,
-               prob_w1=0.6, R_baseline=None):
+               prob_w1=0.6, R_baseline=None, wind_direction=0.0):
     """
     Compute μ (speed ratio) and R (range) under wind uncertainty for four methods.
     
@@ -116,7 +122,7 @@ def wind_model(agent_parameters, intruder_parameters, t_fuel,
     - Intruder = Pursuer (P) → uses intruder_parameters
     - Agent = Agent (A) → uses agent_parameters
     - Pursuer heading = 0 rad (east)
-    - Wind direction = eastward (0 rad)
+    - Wind direction = eastward (0 degrees) or westward (180 degrees)
     - If intruder 'heading' is missing, it defaults to 0 rad via ground_speed()
     """
 
@@ -124,72 +130,67 @@ def wind_model(agent_parameters, intruder_parameters, t_fuel,
         raise ValueError("t_fuel must be non-negative")
     if not (0.0 <= prob_w1 <= 1.0):
         raise ValueError("prob_w1 must be in [0, 1]")
+    # Allow any wind_direction (radians). Ground speed uses vector sum and classification uses wind_effect().
 
     prob_w2 = 1.0 - prob_w1
     eps = 1e-9
-    
-    agent_speed = agent_parameters.get('speed')
-    pursuer_speed = intruder_parameters.get('speed')
 
-    # ---------------------------------------------------------
-    # Step 1: Compute ground-speed uncertainty using your function
-    # ---------------------------------------------------------
+    agent_speed = float(agent_parameters.get('speed'))
+    pursuer_speed = float(intruder_parameters.get('speed'))
 
-    pursuer_ground_speed_expected, pursuer_ground_speed_1, pursuer_ground_speed_2 = ground_speed_uncertainty(intruder_parameters, wind_speed_1, wind_speed_2, prob_w1)
+    # Helper: compute expected ground speeds for agent (uses given wind_direction)
+    agent_g_exp, agent_g1, agent_g2 = ground_speed_uncertainty(
+        agent_parameters,
+        wind_speed_1,
+        wind_speed_2,
+        prob_w1,
+        wind_direction=wind_direction,
+    )
 
-    # Agent: can have arbitrary heading → use your helper
-    agent_ground_speed_expected, agent_ground_speed_1, agent_ground_speed_2 = ground_speed_uncertainty(agent_parameters, wind_speed_1, wind_speed_2, prob_w1)
-    
-
-    # ---------------------------------------------------------
-    # Step 2: Apply four wind-uncertainty methods
-    # ---------------------------------------------------------
-    
-    if method == "baseline":
-        # Baseline (no wind uncertainty)
-        mu = agent_parameters['speed'] / intruder_parameters['speed']
-        R  = R_baseline
-
-    elif method == "conservative":
-        # Method 1 – Conservative (Tailwind Max)
-        pursuer_effective_speed = max(pursuer_ground_speed_1, pursuer_ground_speed_2)
-        mu = agent_ground_speed_expected / pursuer_effective_speed
-        R  = pursuer_effective_speed / pursuer_speed
-
-    elif method == "optimistic":
-        # Method 2 – Optimistic (Headwind Min)
-        pursuer_effective_speed = min(pursuer_ground_speed_1 - wind_speed_1*2, pursuer_ground_speed_2 - wind_speed_2*2)
-
-        mu = agent_ground_speed_expected / pursuer_effective_speed
-        R  = pursuer_effective_speed / pursuer_speed
-
-    elif method == "cons_expected":
-        # Method 3 – Conservative Expected (Expected of ratios)
-        mu = (
-            prob_w1 * (agent_ground_speed_1 / pursuer_ground_speed_1) +
-            prob_w2 * (agent_ground_speed_2 / pursuer_ground_speed_2)
-        )
-        R = (
-            prob_w1 * (pursuer_ground_speed_1) / pursuer_speed +
-            prob_w2 * (pursuer_ground_speed_2) / pursuer_speed
-        )
-
-    elif method == "opt_expected":
-        # Method 4 – Optimistic Expected (Ratio of expectations)
-        mu = (
-            prob_w1 * (agent_ground_speed_1 / (pursuer_ground_speed_1 - wind_speed_1*2)) +
-            prob_w2 * (agent_ground_speed_2 / (pursuer_ground_speed_2 - wind_speed_2*2))
-        )
-        R = (
-            prob_w1 * (pursuer_ground_speed_1 - wind_speed_1*2)/pursuer_speed +
-            prob_w2 * (pursuer_ground_speed_2 - wind_speed_2*2)/pursuer_speed
-        )
-
+    # Choose pursuer wind direction per method
+    method_lower = str(method).lower()
+    if method_lower in ("conservative", "cons_expected"):
+        wdir_pursuer = 0.0  # tailwind relative to pursuer heading (east)
+    elif method_lower in ("optimistic", "opt_expected"):
+        wdir_pursuer = np.pi  # headwind relative to pursuer heading (west)
+    elif method_lower == "baseline":
+        wdir_pursuer = None  # will not be used
     else:
         raise ValueError("method must be 'conservative', 'optimistic', 'cons_expected', or 'opt_expected'")
 
-    if R_baseline is not None:
-        R = min(R, R_baseline)
+    if method_lower != "baseline":
+        pursuer_g_exp, pursuer_g1, pursuer_g2 = ground_speed_uncertainty(
+            intruder_parameters,
+            wind_speed_1,
+            wind_speed_2,
+            prob_w1,
+            wind_direction=wdir_pursuer,
+        )
+
+    # Apply methods
+    if method_lower == "baseline":
+        mu = agent_speed / pursuer_speed
+        R = R_baseline if R_baseline is not None else pursuer_speed / pursuer_speed
+
+    elif method_lower == "conservative":
+        # Ratio of expectations: E[V_A] / E[V_P] with pursuer tailwind
+        mu = agent_g_exp / pursuer_g_exp
+        R = R_baseline if R_baseline is not None else (pursuer_g_exp / pursuer_speed)
+
+    elif method_lower == "optimistic":
+        # Ratio of expectations: E[V_A] / E[V_P] with pursuer headwind
+        mu = agent_g_exp / pursuer_g_exp
+        R = R_baseline if R_baseline is not None else (pursuer_g_exp / pursuer_speed)
+
+    elif method_lower == "cons_expected":
+        # Expectation of ratios with pursuer tailwind
+        mu = prob_w1 * (agent_g1 / pursuer_g1) + prob_w2 * (agent_g2 / pursuer_g2)
+        R = R_baseline if R_baseline is not None else (prob_w1 * pursuer_g1 + prob_w2 * pursuer_g2) / pursuer_speed
+
+    elif method_lower == "opt_expected":
+        # Expectation of ratios with pursuer headwind
+        mu = prob_w1 * (agent_g1 / pursuer_g1) + prob_w2 * (agent_g2 / pursuer_g2)
+        R = R_baseline if R_baseline is not None else (prob_w1 * pursuer_g1 + prob_w2 * pursuer_g2) / pursuer_speed
 
     # ---------------------------------------------------------
     # Step 3: Return explicit results
@@ -199,13 +200,13 @@ def wind_model(agent_parameters, intruder_parameters, t_fuel,
         "mu": mu,
         "R": R,
         "pursuer_ground_speeds": {
-            "expected": pursuer_ground_speed_expected,
-            "wind_1": pursuer_ground_speed_1,
-            "wind_2": pursuer_ground_speed_2,
+            "expected": pursuer_g_exp if method_lower != "baseline" else pursuer_speed,
+            "wind_1": pursuer_g1 if method_lower != "baseline" else pursuer_speed,
+            "wind_2": pursuer_g2 if method_lower != "baseline" else pursuer_speed,
         },
         "agent_ground_speeds": {
-            "expected": agent_ground_speed_expected,
-            "wind_1": agent_ground_speed_1,
-            "wind_2": agent_ground_speed_2,
+            "expected": agent_g_exp,
+            "wind_1": agent_g1,
+            "wind_2": agent_g2,
         }
     }
