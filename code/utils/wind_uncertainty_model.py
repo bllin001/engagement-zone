@@ -12,7 +12,7 @@ def wrap_angle_deg(angle: float) -> float:
 def wind_effect(wind_direction=0.0):
     """Classify wind relative to +x (east) for labeling purposes (radians).
 
-    0 → east (tailwind for eastbound pursuer), π → west (headwind), others crosswind.
+    0 → east (tailwind for easdimetbound pursuer), π → west (headwind), others crosswind.
     """
     two_pi = 2 * np.pi
     wd = float(wind_direction) % two_pi
@@ -148,24 +148,30 @@ def wind_model(agent_parameters, intruder_parameters, t_fuel,
     )
 
     # Choose pursuer wind direction per method
+    # Document conservative assumption (Eq. 24): V_P = v_intruder + w
+    # -> intruder always benefits from wind, no heading, no vector decomposition.
     method_lower = str(method).lower()
-    if method_lower in ("conservative", "cons_expected"):
-        wdir_pursuer = 0.0  # tailwind relative to pursuer heading (east)
-    elif method_lower in ("optimistic", "opt_expected"):
-        wdir_pursuer = np.pi  # headwind relative to pursuer heading (west)
-    elif method_lower == "baseline":
-        wdir_pursuer = None  # will not be used
-    else:
-        raise ValueError("method must be 'conservative', 'optimistic', 'cons_expected', or 'opt_expected'")
+    valid = ("baseline", "conservative", "optimistic", "cons_expected", "opt_expected")
+    if method_lower not in valid:
+        raise ValueError("method must be 'baseline', 'conservative', 'optimistic', 'cons_expected', or 'opt_expected'")
 
-    if method_lower != "baseline":
-        pursuer_g_exp, pursuer_g1, pursuer_g2 = ground_speed_uncertainty(
-            intruder_parameters,
-            wind_speed_1,
-            wind_speed_2,
-            prob_w1,
-            wind_direction=wdir_pursuer,
-        )
+    if method_lower == "baseline":
+        pursuer_g1 = pursuer_speed
+        pursuer_g2 = pursuer_speed
+        pursuer_g_exp = pursuer_speed
+
+    else:
+        if method_lower in ("conservative", "cons_expected"):
+            # Conservative: intruder benefits (tailwind best-case)
+            pursuer_g1 = pursuer_speed + float(wind_speed_1)
+            pursuer_g2 = pursuer_speed + float(wind_speed_2)
+
+        elif method_lower in ("optimistic", "opt_expected"):
+            # Optimistic (for the agent): intruder is penalized by wind (headwind worst-case)
+            pursuer_g1 = max(eps, pursuer_speed - float(wind_speed_1))
+            pursuer_g2 = max(eps, pursuer_speed - float(wind_speed_2))
+
+        pursuer_g_exp = prob_w1 * pursuer_g1 + prob_w2 * pursuer_g2
 
     # Apply methods
     if method_lower == "baseline":

@@ -16,9 +16,10 @@ import matplotlib.patheffects as PathEffects
 from matplotlib.patches import Polygon
 from matplotlib.ticker import FormatStrFormatter
 import numpy as np
-from matplotlib import animation
+import pandas as pd
 
 from utils.engament_zone_model import agent_safety, rho_values, wrap_angle_deg
+from utils.wind_uncertainty_model import wind_model, ground_speed_uncertainty
 
 
 # Node class
@@ -52,6 +53,10 @@ class RRTStar:
         lambda_weight=0.5,
         edge_sample_points=15,
         edge_log_limit=5,
+        wind_csv_path=None,
+        wind_method="cons_expected",
+        wind_direction_deg=0.0,
+        t_fuel=0.0,
     ):
         """
         Initialize the RRT* planner.
@@ -84,16 +89,42 @@ class RRTStar:
         if intruder_parameters is None:
             raise ValueError("intruder_parameters are required for EZ validation.")
         intruder_speed = intruder_parameters.get('speed', 0.0)
+        intr_heading = intruder_parameters.get('heading', None)
+        intr_heading_deg = float(intruder_parameters.get('heading_deg', 0.0))
+        if intr_heading is None:
+            intr_heading = math.radians(intr_heading_deg)
+
+        # Preserve intruder motion params (heading/index_speed) if provided
         self.intruder_parameters = {
             'x': float(intruder_parameters.get('x', 0.0)),
             'y': float(intruder_parameters.get('y', 0.0)),
             'speed': float(intruder_speed) if intruder_speed is not None else 0.0,
+            'heading': float(intr_heading),
+            'heading_deg': float(intr_heading_deg),
+            'index_speed': float(intruder_parameters.get('index_speed', 0.0)),
         }
         self.mu = float(mu)
         self.R = float(R)
         self.r = float(r)
         self.agent_speed = float(agent_speed) if agent_speed is not None else 0.0
         self.lambda_weight = float(lambda_weight)
+        
+        # --- Wind grid (loaded once) -----------------------------------------
+        self.wind_csv_path = wind_csv_path
+        self.wind_method = str(wind_method)
+        self.wind_direction_deg = float(wind_direction_deg)
+        self.wind_direction_rad = math.radians(self.wind_direction_deg)
+        self.t_fuel = float(t_fuel)
+
+        if wind_csv_path is not None:
+            df = pd.read_csv(wind_csv_path)
+            # index for O(1) lookup: (lon_idx, lat_idx)
+            df["lon_idx"] = df["lon_idx"].astype(int)
+            df["lat_idx"] = df["lat_idx"].astype(int)
+            self.wind_df = df.set_index(["lon_idx", "lat_idx"]).sort_index()
+        else:
+            self.wind_df = None
+        
         self.edge_sample_points = int(edge_sample_points)
         self.edge_log_limit = int(edge_log_limit)
         self.logged_accepts = 0
@@ -102,6 +133,54 @@ class RRTStar:
         xi_vals, ez_radii, _ = rho_values(self.mu, self.R, self.r)
         self._xi_lookup = np.asarray(xi_vals, dtype=float)
         self._rho_lookup = np.asarray(ez_radii, dtype=float)
+    
+    def get_wind_at_cell(self, ix: int, iy: int):
+        """
+        Return wind regimes for grid cell (ix, iy) using the environment CSV.
+
+        Output keys are normalized to:
+        - cell_id
+        - ws1, ws2
+        - p1, p2
+        - std1, std2 (optional, may be NaN)
+        """
+        if self.wind_df is None:
+            return None
+
+        try:
+            row = self.wind_df.loc[(int(ix), int(iy))]
+        except KeyError:
+            return None
+
+        cell_id = row.get("cell_id", np.nan)
+
+        ws1 = float(row["wind_speed_1"])
+        p1 = float(row["probability_1"])
+
+        ws2 = row.get("wind_speed_2", 0.0)
+        p2 = row.get("probability_2", 0.0)
+
+        std1 = row.get("std_1", np.nan)
+        std2 = row.get("std_2", np.nan)
+
+        # Convert NaN -> 0 for unimodal rows
+        ws2 = 0.0 if (ws2 is None or (isinstance(ws2, float) and math.isnan(ws2))) else float(ws2)
+        p2  = 0.0 if (p2  is None or (isinstance(p2,  float) and math.isnan(p2 ))) else float(p2)
+
+        # Normalize probabilities just in case
+        psum = p1 + p2
+        if psum > 0:
+            p1, p2 = p1 / psum, p2 / psum
+        else:
+            p1, p2 = 1.0, 0.0
+
+        return {
+            "cell_id": cell_id,
+            "ws1": ws1, "ws2": ws2,
+            "p1": p1, "p2": p2,
+            "std1": float(std1) if std1 == std1 else np.nan,
+            "std2": float(std2) if std2 == std2 else np.nan,
+        }
 
     def plan(self):
         """
@@ -111,6 +190,9 @@ class RRTStar:
             rand_node = self.get_random_node()
             nearest_node = self.get_nearest_node(rand_node)
             new_node = self.steer(nearest_node, rand_node)
+
+            if new_node is None:
+                continue
 
             if not self.is_collision_free(new_node):
                 continue
@@ -140,18 +222,34 @@ class RRTStar:
         a small probability.
         """
         if random.random() > 0.2:
-            return Node(random.uniform(0, self.map_size[0]), random.uniform(0, self.map_size[1]))
-        return Node(self.goal.x, self.goal.y)
+            return Node(
+                random.randint(0, int(self.map_size[0]) - 1), 
+                random.randint(0, int(self.map_size[1]) - 1)
+                )
+        return Node(int(round(self.goal.x)), int(round(self.goal.y)))
 
     def steer(self, from_node, to_node):
-        """
-        Steer from one node to another by a fixed step size.
-        """
-        theta = math.atan2(to_node.y - from_node.y, to_node.x - from_node.x)
-        new_node = Node(
-            from_node.x + self.step_size * math.cos(theta),
-            from_node.y + self.step_size * math.sin(theta),
-        )
+        dx = to_node.x - from_node.x
+        dy = to_node.y - from_node.y
+
+        step = int(round(self.step_size))
+        step = max(step, 1)
+
+        sx = 0 if dx == 0 else (1 if dx > 0 else -1)
+        sy = 0 if dy == 0 else (1 if dy > 0 else -1)
+
+        new_x = from_node.x + sx * step
+        new_y = from_node.y + sy * step
+
+        # clamp a límites del mapa
+        new_x = max(0, min(new_x, int(self.map_size[0]) - 1))
+        new_y = max(0, min(new_y, int(self.map_size[1]) - 1))
+
+        # evita nodo idéntico (por si ya está pegado al borde)
+        if new_x == from_node.x and new_y == from_node.y:
+            return None
+
+        new_node = Node(new_x, new_y)
         new_node.parent = from_node
         return new_node
 
@@ -239,53 +337,106 @@ class RRTStar:
 
     def evaluate_edge_cost(self, from_node, to_node, log_decision=False):
         """
-        Evaluate whether the edge is valid under EZ constraints and compute its combined cost.
+        Edge cost using wind uncertainty (per-cell) + heading-dependent EZ.
+        Uses wind_model() to compute mu and R for the edge, then computes rho_values(mu, R, r).
         """
+        # 1) Heading del edge (depende del movimiento en grid)
         heading_theta = math.atan2(to_node.y - from_node.y, to_node.x - from_node.x)
         heading_deg = math.degrees(heading_theta)
 
+        # 2) Celda destino (x=lon_idx, y=lat_idx)
+        ix = int(round(to_node.x))
+        iy = int(round(to_node.y))
+        ix = max(0, min(ix, int(self.map_size[0]) - 1))
+        iy = max(0, min(iy, int(self.map_size[1]) - 1))
+
+        wind = self.get_wind_at_cell(ix, iy)
+        if wind is None:
+            return np.inf
+
+        # 3) Construir parámetros para wind_model (heading importa)
+        agent_params = {
+            "speed": float(self.agent_speed),
+            "heading": float(heading_theta),  # radians
+        }
+        intr_heading = self.intruder_parameters.get("heading", None)
+        if intr_heading is None:
+            intr_heading = math.radians(float(self.intruder_parameters.get("heading_deg", 0.0)))
+
+        intruder_params = {
+            "speed": float(self.intruder_parameters.get("speed", 0.0)),
+            "heading": float(intr_heading),
+        }
+
+        res = wind_model(
+            agent_params,
+            intruder_params,
+            t_fuel=self.t_fuel,
+            method=self.wind_method,
+            wind_speed_1=wind["ws1"],
+            wind_speed_2=wind["ws2"],
+            prob_w1=wind["p1"],
+            R_baseline=self.R,                 # baseline R de tu setup
+            wind_direction=self.wind_direction_rad,
+        )
+
+        mu_edge = float(res["mu"])
+        R_edge = float(res["R"])
+
+        # 4) Recalcular lookup de rho para este edge (porque mu/R cambian)
+        xi_vals, ez_radii, _ = rho_values(mu_edge, R_edge, self.r)
+        xi_lookup = np.asarray(xi_vals, dtype=float)
+        rho_lookup = np.asarray(ez_radii, dtype=float)
+
+        def lookup_rho_dynamic(xi_rad):
+            xi = ((xi_rad + math.pi) % (2.0 * math.pi)) - math.pi
+            idx = int(np.argmin(np.abs(xi_lookup - xi)))
+            return float(rho_lookup[idx])
+
+        # 5) Sampleo del edge (en grid con step=1, puedes bajar edge_sample_points a 1 o 2)
         sample_params = np.linspace(0.0, 1.0, self.edge_sample_points)
         clearances = []
 
         intruder = self.intruder_parameters
         intruder_dict = {
-            'x': intruder['x'],
-            'y': intruder['y'],
-            'speed': intruder.get('speed', 0.0),
+            "x": float(intruder["x"]),
+            "y": float(intruder["y"]),
+            "speed": float(intruder.get("speed", 0.0)),
         }
 
         for t in sample_params:
             sample_x = from_node.x + t * (to_node.x - from_node.x)
             sample_y = from_node.y + t * (to_node.y - from_node.y)
-            dx = sample_x - intruder['x']
-            dy = sample_y - intruder['y']
+
+            dx = sample_x - intruder_dict["x"]
+            dy = sample_y - intruder_dict["y"]
             distance = math.hypot(dx, dy)
 
             theta_los_deg = math.degrees(math.atan2(dy, dx))
             aspect_deg = wrap_angle_deg(heading_deg - theta_los_deg)
             aspect_rad = math.radians(aspect_deg)
-            ez_radius = self._lookup_rho(aspect_rad)
+            ez_radius = lookup_rho_dynamic(aspect_rad)
 
             agent_dict = {
-                'x': sample_x,
-                'y': sample_y,
-                'heading': heading_theta,
-                'speed': self.agent_speed,
+                "x": sample_x,
+                "y": sample_y,
+                "heading": heading_theta,
+                "speed": float(self.agent_speed),
             }
-            safe, _, _ = agent_safety(intruder_dict, agent_dict, self.mu, self.R, self.r)
+
+            safe, _, _ = agent_safety(intruder_dict, agent_dict, mu_edge, R_edge, self.r)
 
             if (not safe) or (distance <= ez_radius):
                 if log_decision and self.logged_rejects < self.edge_log_limit:
                     self.logged_rejects += 1
                     print(
-                        f"[EZ-EDGE] Rejected edge ({from_node.x:.2f},{from_node.y:.2f}) -> "
-                        f"({to_node.x:.2f},{to_node.y:.2f}) at sample ({sample_x:.2f},{sample_y:.2f}); "
-                        f"d={distance:.3f}, rho={ez_radius:.3f}, ξ={aspect_deg:.1f}°"
+                        f"[EZ+WIND] Reject ({from_node.x:.0f},{from_node.y:.0f})->({to_node.x:.0f},{to_node.y:.0f}) "
+                        f"cell=({ix},{iy}) ws=({wind['ws1']:.2f},{wind['ws2']:.2f}) p=({wind['p1']:.2f},{wind['p2']:.2f}) "
+                        f"mu={mu_edge:.3f} R={R_edge:.3f} d={distance:.3f} rho={ez_radius:.3f} xi={aspect_deg:.1f}"
                     )
                 return np.inf
 
-            clearance = distance - ez_radius
-            clearances.append(clearance)
+            clearances.append(distance - ez_radius)
 
         if not clearances:
             return np.inf
@@ -293,12 +444,13 @@ class RRTStar:
         D_max = max(clearances)
         if D_max <= 0:
             return np.inf
+
         clearance_min = min(clearances)
 
-        L = np.linalg.norm([to_node.x - from_node.x, to_node.y - from_node.y])
-        L_max = max(self.step_size, 1e-6)
-        C_distance = L / L_max
-        C_distance = min(C_distance, 1.0)
+        # distancia del edge
+        L = math.hypot(to_node.x - from_node.x, to_node.y - from_node.y)
+        L_max = max(self.step_size, 1e-9)  # en grid es ~1
+        C_distance = min(L / L_max, 1.0)
 
         C_safety = clearance_min / D_max
         C_edge = self.lambda_weight * C_distance + (1.0 - self.lambda_weight) * C_safety
@@ -306,12 +458,256 @@ class RRTStar:
         if log_decision and self.logged_accepts < self.edge_log_limit:
             self.logged_accepts += 1
             print(
-                f"[EZ-EDGE] Accepted edge ({from_node.x:.2f},{from_node.y:.2f}) -> "
-                f"({to_node.x:.2f},{to_node.y:.2f}); C_edge={C_edge:.3f}, "
-                f"C_dist={C_distance:.3f}, C_safe={C_safety:.3f}"
+                f"[EZ+WIND] Accept ({from_node.x:.0f},{from_node.y:.0f})->({to_node.x:.0f},{to_node.y:.0f}) "
+                f"cell=({ix},{iy}) mu={mu_edge:.3f} R={R_edge:.3f} C_edge={C_edge:.3f}"
             )
-        return C_edge
 
+        return C_edge
+    
+    def export_simulation_csvs(
+        self,
+        path,
+        output_dir,
+        *,
+        dt=1.0,
+        n_theta=6,
+        theta_min=-math.pi,
+        theta_max=math.pi,
+        endpoint=False,
+        run_id=None,
+    ):
+        """
+        Export simulation outputs into three clean CSV files:
+        1) agent_state.csv   : agent indices (lon_idx/lat_idx) + selected wind regimes per t
+        2) intruder_state.csv: intruder indices + EZ parameters (mu, R, r) per t
+        3) ez_boundary.csv   : EZ boundary points in index-space per t
+
+        Assumption:
+        - The planner operates directly in grid-index space:
+            node.x == lon_idx, node.y == lat_idx
+        - Therefore the exported data contains ONLY indices (no x/y world coords).
+
+        Intruder motion:
+        - If self.intruder_parameters provides 'index_speed' (> 0) and an optional
+          'heading' (radians) or 'heading_deg' (degrees), the intruder position will
+          advance each time step by:
+              dx = index_speed * cos(heading) * dt
+              dy = index_speed * sin(heading) * dt
+        - Otherwise, intruder remains fixed at its initial x/y.
+        """
+        from pathlib import Path
+        import pandas as pd
+        import numpy as np
+        import math
+
+        if path is None or len(path) == 0:
+            raise ValueError("export_simulation_csvs: path is empty")
+
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Intruder position (float in index-space for motion), plus speed/heading
+        intr_x = float(self.intruder_parameters.get("x", 0.0))
+        intr_y = float(self.intruder_parameters.get("y", 0.0))
+        intr_speed = float(self.intruder_parameters.get("speed", 0.0))
+        # Optional motion parameters
+        heading_rad = self.intruder_parameters.get("heading", None)
+        if heading_rad is None:
+            heading_deg = float(self.intruder_parameters.get("heading_deg", 0.0))
+            heading_rad = math.radians(heading_deg)
+        index_speed = float(self.intruder_parameters.get("index_speed", 0.0))
+
+        width = int(self.map_size[0])
+        height = int(self.map_size[1])
+
+        thetas = np.linspace(float(theta_min), float(theta_max), int(n_theta), endpoint=bool(endpoint))
+
+        agent_rows = []
+        intruder_rows = []
+        boundary_rows = []
+        interaction_rows = []
+
+        for i, (lon_idx, lat_idx) in enumerate(path):
+            lon_idx = int(round(lon_idx))
+            lat_idx = int(round(lat_idx))
+
+            # Clamp indices to map bounds
+            lon_idx = max(0, min(lon_idx, width - 1))
+            lat_idx = max(0, min(lat_idx, height - 1))
+
+            # Heading in index space (computed from neighbor segment)
+            if i < len(path) - 1:
+                nlon, nlat = path[i + 1]
+                heading = math.atan2(int(round(nlat)) - lat_idx, int(round(nlon)) - lon_idx)
+            elif i > 0:
+                plon, plat = path[i - 1]
+                heading = math.atan2(lat_idx - int(round(plat)), lon_idx - int(round(plon)))
+            else:
+                heading = 0.0
+
+            heading_deg = math.degrees(heading)
+            t = float(i) * float(dt)
+
+            # Determine current intruder cell (allow motion)
+            intr_lon_int = max(0, min(int(round(intr_x)), width - 1))
+            intr_lat_int = max(0, min(int(round(intr_y)), height - 1))
+
+            # Read wind regimes for the current grid cell (agent) and intruder cell (possibly moving)
+            wind_agent = self.get_wind_at_cell(lon_idx, lat_idx)
+            wind_intr = self.get_wind_at_cell(intr_lon_int, intr_lat_int)
+            
+            agent_speed_eff = np.nan
+            agent_speed_w1 = np.nan
+            agent_speed_w2 = np.nan
+
+            intruder_speed_eff = np.nan
+            intruder_speed_w1 = np.nan
+            intruder_speed_w2 = np.nan
+
+
+           # Recompute mu, R, and wind-adjusted speeds for this step (agent-side wind)
+            if wind_agent is not None:
+                mu_R = wind_model(
+                    {"speed": float(self.agent_speed), "heading": float(heading)},
+                    {"speed": float(intr_speed), "heading": 0.0},
+                    t_fuel=float(self.t_fuel),
+                    method=str(self.wind_method),
+                    wind_speed_1=float(wind_agent["ws1"]),
+                    wind_speed_2=float(wind_agent["ws2"]),
+                    prob_w1=float(wind_agent["p1"]),
+                    R_baseline=float(self.R),
+                    wind_direction=float(self.wind_direction_rad),
+                )
+
+                mu_t = float(mu_R["mu"])
+                R_t = float(mu_R["R"])
+
+                agent_g = mu_R["agent_ground_speeds"]
+
+                agent_speed_eff = float(agent_g["expected"])
+                agent_speed_w1  = float(agent_g["wind_1"])
+                agent_speed_w2  = float(agent_g["wind_2"])
+
+            else:
+                mu_t = float(self.mu)
+                R_t = float(self.R)
+
+            # Intruder ground speed based on its own cell wind (keeps cell_id aligned with lon/lat)
+            if wind_intr is not None:
+                intruder_speed_eff, intruder_speed_w1, intruder_speed_w2 = ground_speed_uncertainty(
+                    {"speed": float(intr_speed), "heading": 0.0},
+                    wind_intr["ws1"],
+                    wind_intr["ws2"],
+                    wind_intr["p1"],
+                    wind_direction=float(self.wind_direction_rad),
+                )
+            else:
+                intruder_speed_eff = float(intr_speed)
+                intruder_speed_w1 = float(intr_speed)
+                intruder_speed_w2 = float(intr_speed)
+
+            # --- Agent state (indices only)
+            agent_rows.append({
+                "t": t,
+                "cell_id": int(wind_agent["cell_id"]) if wind_agent else np.nan,
+                "lon_idx": lon_idx,
+                "lat_idx": lat_idx,
+                "agent_speed": float(self.agent_speed),
+                "agent_ground_speed_expected": agent_speed_eff,
+                "agent_ground_speed_w1": agent_speed_w1,
+                "agent_ground_speed_w2": agent_speed_w2,
+                "heading_deg": float(heading_deg),
+                "wind_speed_1": float(wind_agent["ws1"]) if wind_agent else np.nan,
+                "wind_speed_2": float(wind_agent["ws2"]) if wind_agent else np.nan,
+                "probability_1": float(wind_agent["p1"]) if wind_agent else np.nan,
+                "probability_2": float(wind_agent["p2"]) if wind_agent else np.nan,
+            })
+
+            # --- Intruder state (indices only) + EZ parameters
+            intruder_rows.append({
+                "t": t,
+                "cell_id": int(wind_intr["cell_id"]) if wind_intr else np.nan,
+                "lon_idx": intr_lon_int,
+                "lat_idx": intr_lat_int,
+                "intruder_speed": float(intr_speed),
+                "intruder_ground_speed_expected": intruder_speed_eff if wind_intr else float(intr_speed),
+                "intruder_ground_speed_w1": intruder_speed_w1 if wind_intr else float(intr_speed),
+                "intruder_ground_speed_w2": intruder_speed_w2 if wind_intr else float(intr_speed),
+                "mu": float(mu_t),
+                "R": float(R_t),
+                "r": float(self.r),
+                "heading_deg": float(math.degrees(heading_rad)) if heading_rad is not None else 0.0,
+                "index_speed": float(index_speed),
+            })
+
+            # --- EZ boundary sampled at N thetas, expressed in index-space
+            xi_vals, rho_vals, _ = rho_values(float(mu_t), float(R_t), float(self.r))
+            xi_arr = np.asarray(xi_vals, dtype=float)
+            rho_arr = np.asarray(rho_vals, dtype=float)
+
+            for j, theta in enumerate(thetas):
+                idx = int(np.argmin(np.abs(xi_arr - float(theta))))
+                rho = float(rho_arr[idx])
+
+                b_lon = float(intr_x) + rho * math.cos(float(theta))
+                b_lat = float(intr_y) + rho * math.sin(float(theta))
+
+                boundary_rows.append({
+                    "t": t,
+                    "point_id": int(j),
+                    "theta_rad": float(theta),
+                    "rho": float(rho),
+                    "boundary_lon_idx": float(b_lon),
+                    "boundary_lat_idx": float(b_lat),
+                })
+            
+            dx = lon_idx - intr_x
+            dy = lat_idx - intr_y
+            distance = math.sqrt(dx*dx + dy*dy)
+
+            los_rad = math.atan2(dy, dx)  # intruder -> agent LOS
+
+            xi_vals, rho_vals, _ = rho_values(mu_t, R_t, self.r)
+            xi_arr = np.asarray(xi_vals, dtype=float)
+            rho_arr = np.asarray(rho_vals, dtype=float)
+
+            # find rho at LOS (closest theta sample)
+            idx = int(np.argmin(np.abs(xi_arr - los_rad)))
+            rho_at_los = float(rho_arr[idx])
+
+            clearance = float(distance - rho_at_los)
+            inside_EZ = bool(distance <= rho_at_los)
+
+            interaction_rows.append({
+                "t": t,
+                "cell_id": int(wind_agent["cell_id"]) if wind_agent else np.nan,
+                "agent_lon_idx": lon_idx,
+                "agent_lat_idx": lat_idx,
+                "intruder_lon_idx": intr_lon_int,
+                "intruder_lat_idx": intr_lat_int,
+                "distance": distance,
+                "los_rad": los_rad,
+                "rho_at_los": rho_at_los,
+                "clearance": clearance,
+                "inside_EZ": inside_EZ,
+                "mu": mu_t,
+                "R": R_t,
+                "r": float(self.r),
+            })
+
+            # Advance intruder for next step if motion is enabled
+            if index_speed != 0.0:
+                intr_x = float(intr_x + index_speed * math.cos(heading_rad) * float(dt))
+                intr_y = float(intr_y + index_speed * math.sin(heading_rad) * float(dt))
+                # Clamp to map bounds
+                intr_x = max(0.0, min(intr_x, float(width - 1)))
+                intr_y = max(0.0, min(intr_y, float(height - 1)))
+
+        pd.DataFrame(agent_rows).to_csv(out_dir / "agent_state.csv", index=False)
+        pd.DataFrame(intruder_rows).to_csv(out_dir / "intruder_state.csv", index=False)
+        pd.DataFrame(boundary_rows).to_csv(out_dir / "ez_boundary.csv", index=False)
+        pd.DataFrame(interaction_rows).to_csv(out_dir / "interaction_state.csv", index=False)
+    
     def _lookup_rho(self, xi_rad):
         """
         Get the EZ radius for a given aspect angle using nearest-neighbor lookup on rho_values output.
