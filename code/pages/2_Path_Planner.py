@@ -292,7 +292,7 @@ if "rrt" in st.session_state:
                 # This is better than the old "Overview" because it shows the wind heat map
                 fig, _ = pr.plot_final_paper_figure(agent_data, intruder_data, ez_data, wind_data)
                 
-                st.pyplot(fig, width='stretch')
+                st.pyplot(fig, use_container_width=True)
                 plt.close(fig)
                 
                 st.caption("Visualization of the optimal path over the wind uncertainty map.")
@@ -306,7 +306,7 @@ if "rrt" in st.session_state:
                     r=st.session_state.r,
                     origin_shift=(st.session_state.shift_x, st.session_state.shift_y),
                 )
-                st.pyplot(fig, width='stretch')
+                st.pyplot(fig, use_container_width=True)
                 plt.close(fig)
         
         elif path:
@@ -405,7 +405,7 @@ if "rrt" in st.session_state:
 
                 st.divider()
                 st.caption("Point-by-point path details:")
-                st.dataframe(diagnostics, width='stretch', height=250)
+                st.dataframe(diagnostics, use_container_width=True, height=250)
 
                 st.download_button(
                     "📥 Download Diagnostics CSV",
@@ -437,13 +437,13 @@ if "rrt" in st.session_state:
 #             with tab1:
 #                 st.info("Quick static visualization of the path")
 #                 fig, _ = pr.plot_path(agent_data, intruder_data, ez_data)
-#                 st.pyplot(fig, width='stretch')
+#                 st.pyplot(fig, use_container_width=True)
 #                 plt.close(fig)
             
 #             with tab2:
 #                 st.info("Publication-ready figure with wind uncertainty background")
 #                 fig, _ = pr.plot_final_paper_figure(agent_data, intruder_data, ez_data, wind_data)
-#                 st.pyplot(fig, width='stretch')
+#                 st.pyplot(fig, use_container_width=True)
 #                 plt.close(fig)
         
 #         except Exception as e:
