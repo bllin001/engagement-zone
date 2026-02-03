@@ -293,82 +293,73 @@ if "rrt" in st.session_state:
         if path and ("exported_to" in st.session_state):
             st.caption("Uses utils/plot_results.py (exported CSVs required).")
 
-            # Controls
-            cA, cB, cC, cD = st.columns([1, 1, 1, 1])
+            # Simplified Controls
+            cA, cB = st.columns(2)
             fps = cA.slider("FPS", min_value=1, max_value=20, value=5, step=1)
-            height = cB.slider("Viewer height", min_value=450, max_value=1200, value=650, step=50)
-            scale = cC.slider("Scale", min_value=0.50, max_value=1.00, value=0.75, step=0.05)
-            embed_frames = cD.checkbox("Embed frames", value=False)
-
-            st.markdown(
-                "<div class='anim-hint'>Tip: If it looks cut off, lower <b>Scale</b> (e.g., 0.70) or increase <b>Viewer height</b>. Keep <b>Embed frames</b> off unless you need offline playback.</div>",
-                unsafe_allow_html=True,
-            )
+            # We don't need 'scale' anymore because we will auto-fit width
+            embed_frames = cB.checkbox("Embed frames (for offline save)", value=False)
 
             with st.spinner("Generating animation..."):
                 try:
                     pr.SAVE_ANIMATION_FRAMES = False
-
                     agent_data, intruder_data, ez_data, wind_data = pr.load_results()
 
-                    # Try to generate a Streamlit-friendly animation figure size.
+                    # 1. GENERATE A SMALLER BASE FIGURE
+                    # figsize=(10, 8) at 80 DPI = 800x640 pixels (Fits most screens)
                     try:
                         fig, ani = pr.plot_with_wind_animation(
                             agent_data,
                             intruder_data,
                             ez_data,
                             wind_data,
-                            figsize=(10, 6),
-                            dpi=110,
+                            figsize=(10, 8), 
+                            dpi=80,  # Lower DPI prevents "giant" images
                         )
                     except TypeError:
-                        # Backward-compatible: older signature without figsize/dpi
+                        # Fallback if your plot function doesn't accept figsize
                         fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
 
-                    # Make sure layout is compact (helps avoid clipping)
-                    try:
-                        fig.tight_layout()
-                    except Exception:
-                        pass
+                    # Tight layout removes whitespace borders
+                    fig.tight_layout()
 
-                    plt.rcParams["animation.embed_limit"] = 50
+                    # 2. CONVERT TO HTML
                     html_str = ani.to_jshtml(
                         fps=fps,
                         embed_frames=embed_frames,
                         default_mode="loop",
                     )
-
-                    # Center the animation and scale it so it fits within the Streamlit layout.
-                    wrapped_html = (
-                        "<div class='anim-wrap'>"
-                        "<div style='width:100%; display:flex; justify-content:center; align-items:flex-start;'>"
-                        f"<div class='anim-scale' style='transform: scale({scale});'>"
-                        f"{html_str}"
-                        "</div>"
-                        "</div>"
-                        "</div>"
-                    )
-
-                    components.html(
-                        wrapped_html,
-                        height=height,
-                        scrolling=True,
-                    )
                     plt.close(fig)
+
+                    # 3. RESPONSIVE CSS WRAPPER
+                    # This forces the inner image to fit the container width
+                    responsive_style = """
+                    <style>
+                        .anim-container {
+                            width: 100%;
+                            display: flex;
+                            justify-content: center;
+                        }
+                        /* Target Matplotlib's generated image/video tags */
+                        .anim-container img, .anim-container video {
+                            max-width: 100% !important;
+                            height: auto !important;
+                        }
+                        /* Hide the ugly default scrollbar if slightly oversized */
+                        .anim-container > div {
+                            overflow: hidden !important; 
+                        }
+                    </style>
+                    """
+                    
+                    # Wrap the JSHTML
+                    wrapped_html = f"{responsive_style}<div class='anim-container'>{html_str}</div>"
+
+                    # 4. RENDER
+                    # Height is approximate; 800px usually fits the toolbar + plot
+                    components.html(wrapped_html, height=900, scrolling=False)
 
                 except Exception as e:
                     st.error(f"Animation failed: {e}")
-                    st.info("Showing static plot instead.")
-                    fig, _ = rrt.plot(
-                        intruder=(st.session_state.intruder_shifted["x"], st.session_state.intruder_shifted["y"]),
-                        R=st.session_state.R_ez,
-                        r=st.session_state.r,
-                        origin_shift=(st.session_state.shift_x, st.session_state.shift_y),
-                    )
-                    st.pyplot(fig, use_container_width=True)
-                    plt.close(fig)
-        else:
-            st.info("Enable Export simulation CSVs and run the planner to enable animation.")
 
     # ---------- Paper Figure ----------
     with tabs[2]:
