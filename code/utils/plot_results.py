@@ -354,10 +354,16 @@ def plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data):
     start_y = agent_data['lat_idx'].iloc[0]
     goal_x = agent_data['lon_idx'].iloc[-1]
     goal_y = agent_data['lat_idx'].iloc[-1]
-    ax.scatter([start_x], [start_y], color='#1b7ccc', s=150, marker='*', 
-              label=f'Start', zorder=5, edgecolors='white', linewidth=1.1)
-    ax.scatter([goal_x], [goal_y], color='#ffc857', s=180, marker='D',
-              label=f'Goal', zorder=5, edgecolors='white', linewidth=1.1)
+
+    # Start marker (blue star) with compact coordinate label
+    ax.scatter([start_x], [start_y], color='#1b7ccc', s=140, marker='*',
+        label='Start', zorder=5, edgecolors='white', linewidth=1.0)
+
+    # Goal marker (black/white) with compact coordinate label
+    ax.scatter([goal_x], [goal_y], color='black', s=220, marker='D',
+        edgecolors='white', linewidth=1.2, label='Goal', zorder=5)
+    ax.scatter([goal_x], [goal_y], color='white', s=60, marker='o',
+        edgecolors='black', linewidth=0.8, zorder=6)
     
     # Telemetry panel
     telemetry = ax_info.text(0.05, 0.9, '', transform=ax_info.transAxes, 
@@ -557,10 +563,12 @@ def plot_final_paper_figure(agent_data, intruder_data, ez_data, wind_data):
     start_y = agent_data['lat_idx'].iloc[0]
     goal_x = agent_data['lon_idx'].iloc[-1]
     goal_y = agent_data['lat_idx'].iloc[-1]
-    ax.scatter([start_x], [start_y], color='#1b7ccc', s=150, marker='*', 
-              label='Start', zorder=5, edgecolors='white', linewidth=1.1)
-    ax.scatter([goal_x], [goal_y], color='#ffc857', s=180, marker='D',
-              label='Goal', zorder=5, edgecolors='white', linewidth=1.1)
+    ax.scatter([start_x], [start_y], color='#1b7ccc', s=140, marker='*',
+            label='Start', zorder=5, edgecolors='white', linewidth=1.0)
+    ax.scatter([goal_x], [goal_y], color='black', s=220, marker='D',
+            edgecolors='white', linewidth=1.2, label='Goal', zorder=5)
+    ax.scatter([goal_x], [goal_y], color='white', s=60, marker='o',
+            edgecolors='black', linewidth=0.8, zorder=6)
     
     ax.set_xlabel('Longitude Idx', fontsize=12, fontweight='bold', color='#111111')
     ax.set_ylabel('Latitude Idx', fontsize=12, fontweight='bold', color='#111111')

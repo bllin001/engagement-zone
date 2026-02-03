@@ -326,7 +326,10 @@ class RRTStar:
         while node is not None:
             path.append([node.x, node.y])
             node = node.parent
-        return path[::-1]
+        path = path[::-1]
+        if path and self.reached_goal(goal_node):
+            path[-1] = [self.goal.x, self.goal.y]
+        return path
 
     def get_nearest_node(self, rand_node):
         """
