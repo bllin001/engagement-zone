@@ -6,6 +6,9 @@ import time
 from pathlib import Path
 import warnings
 import streamlit.components.v1 as components
+from io import BytesIO
+import tempfile
+from matplotlib.animation import PillowWriter
 
 from utils.engament_zone_model import agent, intruder, rho_values
 from utils.rrt_path_planner import RRTStar
@@ -131,7 +134,7 @@ lambda_weight = col4.number_input("Lambda Weight", value=0.5, step=0.1, format="
 
 edge_sample_points = st.sidebar.number_input("Edge Sample Points", value=15, step=1)
 
-export_sim = st.sidebar.checkbox("Export simulation CSVs", value=False)
+export_sim = st.sidebar.checkbox("Export simulation CSVs", value=True)
 run_planner = st.sidebar.button("🚀 Run Path Planner", type="primary")
 
 with st.expander("📋 Current Configuration"):
@@ -338,8 +341,23 @@ if "rrt" in st.session_state:
                     # plt.close(fig)
                     
                     html_str = ani.to_jshtml(fps=5, embed_frames=True, default_mode="loop")
+                    
+                    # Save animation as GIF using temporary file
+                    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmp_file:
+                        tmp_path = tmp_file.name
+                    
+                    writer = PillowWriter(fps=5)
+                    ani.save(tmp_path, writer=writer)
+                    
+                    # Read the GIF file into BytesIO
+                    with open(tmp_path, "rb") as f:
+                        gif_buffer = BytesIO(f.read())
+                    
+                    # Clean up temporary file
+                    Path(tmp_path).unlink()
                     plt.close(fig)
 
+                    # Display animation
                     # CSS for automatic width adjustment
                     style_block = """
                     <style>
@@ -348,6 +366,14 @@ if "rrt" in st.session_state:
                     </style>
                     """
                     components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=850, scrolling=False)
+                    
+                    # Download button
+                    st.download_button(
+                        label="📥 Download Animation as GIF",
+                        data=gif_buffer.getvalue(),
+                        file_name="path_animation.gif",
+                        mime="image/gif",
+                    )
 
                 except Exception as e:
                     st.error(f"Animation failed: {e}")
