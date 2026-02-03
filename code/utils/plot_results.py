@@ -28,8 +28,9 @@ plt.rcParams.update({
     "ytick.color": "#333333",
 })
 
-# OUTPUT_DIR = Path('output/ez-rrt-path')
-OUTPUT_DIR = Path('output')
+# Detect repo root: go up from code/utils/ to repo root
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+OUTPUT_DIR = REPO_ROOT / 'output'
 SIM_OUTPUT_DIR = OUTPUT_DIR / 'simulations'
 IMAGES_OUTPUT_DIR = OUTPUT_DIR / 'images'
 FRAMES_OUTPUT_DIR = IMAGES_OUTPUT_DIR / 'frames'
@@ -73,9 +74,9 @@ def load_results():
     
     # Build adaptive uncertainty field using Harvey datasets (summary + GMM + raw points)
     wind_data = None
-    summary_path = Path('env/data/harvey_cell_summary.csv')
-    dist_path = Path('env/data/harvey_distribution_types_gmm.csv')
-    points_path = Path('env/data/harvey_all_points_with_cells.csv')
+    summary_path = REPO_ROOT / 'env/data/harvey_cell_summary.csv'
+    dist_path = REPO_ROOT / 'env/data/harvey_distribution_types_gmm.csv'
+    points_path = REPO_ROOT / 'env/data/harvey_all_points_with_cells.csv'
 
     try:
         if summary_path.exists() and dist_path.exists() and points_path.exists():
