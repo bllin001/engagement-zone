@@ -270,114 +270,95 @@ if "rrt" in st.session_state:
     c2.metric("Tree Nodes", f"{len(rrt.node_list):,}")
     c3.metric("Path", "✅ Found" if path else "❌ Not found")
 
-    tabs = st.tabs(["🧭 Overview", "🎬 Animation", "📄 Paper Figure", "🧪 Diagnostics"])
+   # ============================
+    # Simplified Visualization (3 Tabs)
+    # ============================
+    # Merged "Overview" & "Paper Figure" into one "Trajectory" tab to remove redundancy.
+    # The high-quality "Paper Figure" is now the default view.
+    tabs = st.tabs(["📍 Trajectory", "🎬 Animation", "📊 Diagnostics"])
 
-    # ---------- Overview ----------
+    # ---------- 1. Trajectory (High Quality Static Map) ----------
     with tabs[0]:
-        fig, _ = rrt.plot(
-            intruder=(st.session_state.intruder_shifted["x"], st.session_state.intruder_shifted["y"]),
-            R=st.session_state.R_ez,
-            r=st.session_state.r,
-            origin_shift=(st.session_state.shift_x, st.session_state.shift_y),
-        )
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
-
-        if path:
-            st.success("Path computed successfully.")
+        if path and ("exported_to" in st.session_state):
+            try:
+                # Disable frame saving for speed
+                pr.SAVE_ANIMATION_FRAMES = False
+                agent_data, intruder_data, ez_data, wind_data = pr.load_results()
+                
+                # Plot the high-res figure (Paper Figure)
+                # This is better than the old "Overview" because it shows the wind heat map
+                fig, _ = pr.plot_final_paper_figure(agent_data, intruder_data, ez_data, wind_data)
+                
+                st.pyplot(fig, use_container_width=True)
+                plt.close(fig)
+                
+                st.caption("Visualization of the optimal path over the wind uncertainty map.")
+            
+            except Exception as e:
+                st.error(f"Could not generate detailed map: {e}")
+                # Fallback to simple plot if the complex one fails
+                fig, _ = rrt.plot(
+                    intruder=(st.session_state.intruder_shifted["x"], st.session_state.intruder_shifted["y"]),
+                    R=st.session_state.R_ez,
+                    r=st.session_state.r,
+                    origin_shift=(st.session_state.shift_x, st.session_state.shift_y),
+                )
+                st.pyplot(fig, use_container_width=True)
+                plt.close(fig)
+        
+        elif path:
+             st.info("⚠️ Export simulation CSVs to view the detailed heat map.")
         else:
             st.warning("No path found.")
 
-    # ---------- Animation ----------
+    # ---------- 2. Animation ----------
     with tabs[1]:
         if path and ("exported_to" in st.session_state):
-            st.caption("Uses utils/plot_results.py (exported CSVs required).")
-
-            # Simplified Controls
-            cA, cB = st.columns(2)
-            fps = cA.slider("FPS", min_value=1, max_value=20, value=5, step=1)
-            # We don't need 'scale' anymore because we will auto-fit width
-            embed_frames = cB.checkbox("Embed frames (for offline save)", value=False)
+            
+            # # Compact Controls
+            # c1, c2 = st.columns([1, 2])
+            # fps = c1.slider("Speed (FPS)", 1, 20, 5)
+            # embed_frames = c2.checkbox("Embed frames (for saving HTML)", value=False)
 
             with st.spinner("Generating animation..."):
                 try:
                     pr.SAVE_ANIMATION_FRAMES = False
                     agent_data, intruder_data, ez_data, wind_data = pr.load_results()
 
-                    # 1. GENERATE A SMALLER BASE FIGURE
-                    # figsize=(10, 8) at 80 DPI = 800x640 pixels (Fits most screens)
+                    # Use low DPI (80) so it fits nicely on web screens
                     try:
                         fig, ani = pr.plot_with_wind_animation(
-                            agent_data,
-                            intruder_data,
-                            ez_data,
-                            wind_data,
-                            figsize=(10, 8), 
-                            dpi=80,  # Lower DPI prevents "giant" images
+                            agent_data, intruder_data, ez_data, wind_data,
+                            figsize=(10, 8), dpi=80
                         )
                     except TypeError:
-                        # Fallback if your plot function doesn't accept figsize
                         fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
 
-                    # Tight layout removes whitespace borders
-                    fig.tight_layout()
-
-                    # 2. CONVERT TO HTML
-                    html_str = ani.to_jshtml(
-                        fps=fps,
-                        embed_frames=embed_frames,
-                        default_mode="loop",
-                    )
+                    # html_str = ani.to_jshtml(fps=fps, embed_frames=embed_frames, default_mode="loop")
+                    # plt.close(fig)
+                    
+                    html_str = ani.to_jshtml(fps=5, embed_frames=True, default_mode="loop")
                     plt.close(fig)
 
-                    # 3. RESPONSIVE CSS WRAPPER
-                    # This forces the inner image to fit the container width
-                    responsive_style = """
+                    # CSS for automatic width adjustment
+                    style_block = """
                     <style>
-                        .anim-container {
-                            width: 100%;
-                            display: flex;
-                            justify-content: center;
-                        }
-                        /* Target Matplotlib's generated image/video tags */
-                        .anim-container img, .anim-container video {
-                            max-width: 100% !important;
-                            height: auto !important;
-                        }
-                        /* Hide the ugly default scrollbar if slightly oversized */
-                        .anim-container > div {
-                            overflow: hidden !important; 
-                        }
+                        .anim-container { width: 100%; display: flex; justify-content: center; }
+                        .anim-container video, .anim-container img { width: 100% !important; height: auto !important; }
                     </style>
                     """
-                    
-                    # Wrap the JSHTML
-                    wrapped_html = f"{responsive_style}<div class='anim-container'>{html_str}</div>"
-
-                    # 4. RENDER
-                    # Height is approximate; 800px usually fits the toolbar + plot
-                    components.html(wrapped_html, height=900, scrolling=False)
+                    components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=850, scrolling=False)
 
                 except Exception as e:
                     st.error(f"Animation failed: {e}")
-
-    # ---------- Paper Figure ----------
-    with tabs[2]:
-        if path and ("exported_to" in st.session_state):
-            try:
-                pr.SAVE_ANIMATION_FRAMES = False
-                agent_data, intruder_data, ez_data, wind_data = pr.load_results()
-                fig, _ = pr.plot_final_paper_figure(agent_data, intruder_data, ez_data, wind_data)
-                st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-            except Exception as e:
-                st.error(f"Could not generate paper figure: {e}")
         else:
-            st.info("Export CSVs first to generate the paper figure.")
+            st.info("You need to run the planner with 'Export simulation CSVs' enabled.")
 
-    # ---------- Diagnostics ----------
-    with tabs[3]:
+    # ---------- 3. Diagnostics ----------
+    with tabs[2]:
         if path:
+            st.markdown("#### 📉 Safety Metrics")
+            # Calculate detailed metrics
             unshifted = [[p[0] - st.session_state.shift_x, p[1] - st.session_state.shift_y] for p in path]
             diagnostics = compute_path_diagnostics(
                 unshifted,
@@ -388,20 +369,26 @@ if "rrt" in st.session_state:
 
             if diagnostics is not None and not diagnostics.empty:
                 metrics = summarize_path_metrics(diagnostics)
+                
+                # Cleaner data visualization
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Path Length", f"{metrics['path_length']:.2f}")
+                m1.metric("Total Length", f"{metrics['path_length']:.2f}")
                 m2.metric("Mean Clearance", f"{metrics['mean_clearance']:.3f}")
-                m3.metric("Min Clearance", f"{metrics['min_clearance']:.3f}")
+                m3.metric("Min Clearance", f"{metrics['min_clearance']:.3f}", delta_color="normal")
                 m4.metric("Safe Points", f"{metrics['percent_safe_points']:.1f}%")
 
+                st.divider()
+                st.caption("Point-by-point path details:")
+                st.dataframe(diagnostics, use_container_width=True, height=250)
+
                 st.download_button(
-                    "📥 Download diagnostics.csv",
+                    "📥 Download Diagnostics CSV",
                     data=diagnostics.to_csv(index=False),
                     file_name="path_diagnostics.csv",
                     mime="text/csv",
                 )
         else:
-            st.info("No path available to compute diagnostics.")
+            st.info("No path data available for analysis.")
 
 # # ============================
 # # Additional Visualization Options
