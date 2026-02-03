@@ -108,14 +108,14 @@ with left:
     tab_b, tab_i, tab_s = st.tabs(["📉 Boundaries", "🎯 Interaction", "🧾 Summary"])
 
     with tab_b:
-        st.pyplot(fig_boundaries, use_container_width=True)
+        st.pyplot(fig_boundaries, width='stretch')
 
     with tab_i:
-        st.pyplot(fig_interaction, use_container_width=True)
+        st.pyplot(fig_interaction, width='stretch')
 
     with tab_s:
         st.subheader("EZ Summary Table")
-        st.dataframe(st.session_state.ez_df, use_container_width=True)
+        st.dataframe(st.session_state.ez_df, width='stretch')
 
 with right:
     st.subheader("Downloads")
@@ -152,4 +152,4 @@ with right:
         st.session_state.R_ez,
         st.session_state.r,
     )
-    st.dataframe(parameters[2], use_container_width=True)
+    st.dataframe(parameters[2], width='stretch')
