@@ -12,5 +12,7 @@ ez.py
 *.Rmd
 *.Rhistory
 
-ignore pdf files
+# ignore pdf files
 *.pdf
+
+/env/data/wrfout_d03_*
