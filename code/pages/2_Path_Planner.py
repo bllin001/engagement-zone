@@ -365,7 +365,7 @@ if "rrt" in st.session_state:
                         .anim-container video, .anim-container img { width: 100% !important; height: auto !important; }
                     </style>
                     """
-                    components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=850, scrolling=False)
+                    components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=950, scrolling=False)
                     
                     # Download button
                     st.download_button(
