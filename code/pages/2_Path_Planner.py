@@ -317,48 +317,17 @@ if "rrt" in st.session_state:
     # ---------- 2. Animation ----------
     with tabs[1]:
         if path and ("exported_to" in st.session_state):
-            
-            # # Compact Controls
-            # c1, c2 = st.columns([1, 2])
-            # fps = c1.slider("Speed (FPS)", 1, 20, 5)
-            # embed_frames = c2.checkbox("Embed frames (for saving HTML)", value=False)
 
             with st.spinner("Generating animation..."):
                 try:
                     pr.SAVE_ANIMATION_FRAMES = False
                     agent_data, intruder_data, ez_data, wind_data = pr.load_results()
 
-                    # Use low DPI (80) so it fits nicely on web screens
-                    try:
-                        fig, ani = pr.plot_with_wind_animation(
-                            agent_data, intruder_data, ez_data, wind_data,
-                            figsize=(10, 8), dpi=80
-                        )
-                    except TypeError:
-                        fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
-
-                    # html_str = ani.to_jshtml(fps=fps, embed_frames=embed_frames, default_mode="loop")
-                    # plt.close(fig)
+                    fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
                     
                     html_str = ani.to_jshtml(fps=5, embed_frames=True, default_mode="loop")
                     
-                    # Save animation as GIF using temporary file
-                    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmp_file:
-                        tmp_path = tmp_file.name
-                    
-                    writer = PillowWriter(fps=5)
-                    ani.save(tmp_path, writer=writer)
-                    
-                    # Read the GIF file into BytesIO
-                    with open(tmp_path, "rb") as f:
-                        gif_buffer = BytesIO(f.read())
-                    
-                    # Clean up temporary file
-                    Path(tmp_path).unlink()
-                    plt.close(fig)
-
-                    # Display animation
-                    # CSS for automatic width adjustment
+                    # Display animation with CSS styling
                     style_block = """
                     <style>
                         .anim-container { width: 100%; display: flex; justify-content: center; }
@@ -367,13 +336,10 @@ if "rrt" in st.session_state:
                     """
                     components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=950, scrolling=False)
                     
-                    # Download button
-                    st.download_button(
-                        label="📥 Download Animation as GIF",
-                        data=gif_buffer.getvalue(),
-                        file_name="path_animation.gif",
-                        mime="image/gif",
-                    )
+                    plt.close(fig)
+
+                except Exception as e:
+                    st.error(f"Animation failed: {e}")
 
                 except Exception as e:
                     st.error(f"Animation failed: {e}")
