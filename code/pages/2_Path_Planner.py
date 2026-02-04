@@ -257,6 +257,22 @@ if run_planner:
             )
             st.session_state.exported_to = out_dir
             st.info(f"📁 Exported simulation CSVs to: {out_dir}")
+            
+            # Pre-generate animation for faster demo experience
+            with st.spinner("🎬 Rendering animation for visualization..."):
+                try:
+                    pr.SAVE_ANIMATION_FRAMES = False
+                    agent_data, intruder_data, ez_data, wind_data = pr.load_results()
+                    fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
+                    html_str = ani.to_jshtml(fps=5, embed_frames=True, default_mode="loop")
+                    plt.close(fig)
+                    
+                    # Store in session state so Animation tab loads instantly
+                    st.session_state.animation_html = html_str
+                    st.success("✅ Animation ready!")
+                except Exception as e:
+                    st.warning(f"Could not pre-generate animation: {e}")
+                    st.session_state.animation_html = None
 
 # ============================
 # Results
@@ -317,32 +333,39 @@ if "rrt" in st.session_state:
     # ---------- 2. Animation ----------
     with tabs[1]:
         if path and ("exported_to" in st.session_state):
-
-            with st.spinner("Generating animation..."):
-                try:
-                    pr.SAVE_ANIMATION_FRAMES = False
-                    agent_data, intruder_data, ez_data, wind_data = pr.load_results()
-
-                    fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
-                    
-                    html_str = ani.to_jshtml(fps=5, embed_frames=True, default_mode="loop")
-                    
-                    # Display animation with CSS styling
-                    style_block = """
-                    <style>
-                        .anim-container { width: 100%; display: flex; justify-content: center; }
-                        .anim-container video, .anim-container img { width: 100% !important; height: auto !important; }
-                    </style>
-                    """
-                    components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=950, scrolling=False)
-                    
-                    plt.close(fig)
-
-                except Exception as e:
-                    st.error(f"Animation failed: {e}")
-
-                except Exception as e:
-                    st.error(f"Animation failed: {e}")
+            # Check if animation was pre-generated
+            if "animation_html" in st.session_state and st.session_state.animation_html is not None:
+                # Display pre-generated animation instantly
+                style_block = """
+                <style>
+                    .anim-container { width: 100%; display: flex; justify-content: center; }
+                    .anim-container video, .anim-container img { width: 100% !important; height: auto !important; }
+                </style>
+                """
+                components.html(
+                    f"{style_block}<div class='anim-container'>{st.session_state.animation_html}</div>", 
+                    height=950, 
+                    scrolling=False
+                )
+            else:
+                # Fallback: generate on-demand if pre-generation failed
+                with st.spinner("Generating animation..."):
+                    try:
+                        pr.SAVE_ANIMATION_FRAMES = False
+                        agent_data, intruder_data, ez_data, wind_data = pr.load_results()
+                        fig, ani = pr.plot_with_wind_animation(agent_data, intruder_data, ez_data, wind_data)
+                        html_str = ani.to_jshtml(fps=5, embed_frames=True, default_mode="loop")
+                        
+                        style_block = """
+                        <style>
+                            .anim-container { width: 100%; display: flex; justify-content: center; }
+                            .anim-container video, .anim-container img { width: 100% !important; height: auto !important; }
+                        </style>
+                        """
+                        components.html(f"{style_block}<div class='anim-container'>{html_str}</div>", height=950, scrolling=False)
+                        plt.close(fig)
+                    except Exception as e:
+                        st.error(f"Animation failed: {e}")
         else:
             st.info("You need to run the planner with 'Export simulation CSVs' enabled.")
 
